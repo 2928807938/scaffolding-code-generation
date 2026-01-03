@@ -8,32 +8,31 @@ func (g *GoGenerator) generateBOM() error {
 go 1.24.11
 
 require (
+	github.com/bytedance/sonic v1.12.6
 	// Hertz HTTP 框架
 	github.com/cloudwego/hertz v0.9.3
 
 	// Kitex RPC 框架
 	github.com/cloudwego/kitex v0.11.3
 
+	// 日志（hlog 已包含在 hertz 中）
+
+	// 验证器
+	github.com/go-playground/validator/v10 v10.23.0
+
 	// 通用工具
 	github.com/google/uuid v1.6.0
-	github.com/bytedance/sonic v1.12.6
+{{if .UseRedis}}
+	// 缓存
+	github.com/redis/go-redis/v9 v9.7.0
+{{end}}
+	// 配置管理
+	github.com/spf13/viper v1.19.0
 
 	// 数据库
 	gorm.io/driver/postgres v1.5.11
 	gorm.io/gorm v1.25.12
-
-	// 配置管理
-	github.com/spf13/viper v1.19.0
-
-	// 日志
-	github.com/cloudwego/hertz/pkg/common/hlog v0.9.3
-
-	// 验证器
-	github.com/go-playground/validator/v10 v10.23.0
-{{if .UseRedis}}
-	// 缓存
-	github.com/redis/go-redis/v9 v9.7.0
-{{end}})
+)
 `
 	if err := g.renderAndWrite(goModTmpl, "bom/go.mod"); err != nil {
 		return err

@@ -62,6 +62,7 @@ func (UserPO) TableName() string {
 import (
 	infraEntity "{{.ModulePath}}/user/infrastructure/entity"
 	"{{.ModulePath}}/user/domain/entity"
+	"{{.ModulePath}}/user/domain/enum"
 	"{{.ModulePath}}/user/domain/valueobject"
 )
 
@@ -86,7 +87,7 @@ func (c *UserConverter) ToEntity(po *infraEntity.UserPO) *entity.User {
 		Username:     po.Username,
 		Email:        email,
 		PasswordHash: po.PasswordHash,
-		Status:       entity.UserStatus(po.Status),
+		Status:       enum.UserStatus(po.Status),
 		CreatedAt:    po.CreatedAt,
 		UpdatedAt:    po.UpdatedAt,
 	}
@@ -107,19 +108,6 @@ func (c *UserConverter) ToPO(user *entity.User) *infraEntity.UserPO {
 		CreatedAt:    user.CreatedAt,
 		UpdatedAt:    user.UpdatedAt,
 	}
-}
-
-// ToEntityList 将 PO 列表转换为领域实体列表
-func (c *UserConverter) ToEntityList(poList []*infraEntity.UserPO) []*entity.User {
-	if poList == nil {
-		return nil
-	}
-
-	entities := make([]*entity.User, len(poList))
-	for i, po := range poList {
-		entities[i] = c.ToEntity(po)
-	}
-	return entities
 }
 `
 	if err := g.renderAndWrite(converterTmpl, "user/infrastructure/converter/user_converter.go"); err != nil {
@@ -228,7 +216,12 @@ func (r *UserRepositoryImpl) List(ctx context.Context, page, pageSize int) ([]*e
 		return nil, 0, err
 	}
 
-	return r.converter.ToEntityList(poList), total, nil
+	// 转换为领域实体
+	users := make([]*entity.User, len(poList))
+	for i, po := range poList {
+		users[i] = r.converter.ToEntity(po)
+	}
+	return users, total, nil
 }
 
 // ExistsByEmail 检查邮箱是否存在
@@ -258,11 +251,6 @@ func (g *GoGenerator) generateUserModule() error {
 	goModTmpl := `module {{.ModulePath}}/user
 
 go 1.24.11
-
-require (
-	{{.ModulePath}}/user/domain v0.0.0
-	{{.ModulePath}}/user/infrastructure v0.0.0
-)
 
 replace (
 	{{.ModulePath}}/user/domain => ./domain

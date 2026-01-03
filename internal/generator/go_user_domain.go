@@ -20,17 +20,10 @@ replace {{.ModulePath}}/bom => ../../bom
 		return err
 	}
 
-	// entity/user.go
-	userEntityTmpl := `package entity
+	// enum/user_status.go
+	userStatusEnumTmpl := `package enum
 
-import (
-	"time"
-
-	"github.com/google/uuid"
-	"{{.ModulePath}}/user/domain/valueobject"
-)
-
-// UserStatus 用户状态
+// UserStatus 用户状态枚举
 type UserStatus int
 
 const (
@@ -39,40 +32,174 @@ const (
 	UserStatusDisabled UserStatus = 2 // 已禁用
 )
 
+// String 返回状态描述
+func (s UserStatus) String() string {
+	switch s {
+	case UserStatusInactive:
+		return "inactive"
+	case UserStatusActive:
+		return "active"
+	case UserStatusDisabled:
+		return "disabled"
+	default:
+		return "unknown"
+	}
+}
+
+// IsValid 验证状态是否有效
+func (s UserStatus) IsValid() bool {
+	return s >= UserStatusInactive && s <= UserStatusDisabled
+}
+
+// IsActive 是否激活状态
+func (s UserStatus) IsActive() bool {
+	return s == UserStatusActive
+}
+
+// IsInactive 是否未激活状态
+func (s UserStatus) IsInactive() bool {
+	return s == UserStatusInactive
+}
+
+// IsDisabled 是否禁用状态
+func (s UserStatus) IsDisabled() bool {
+	return s == UserStatusDisabled
+}
+`
+	if err := g.writeFile("user/domain/enum/user_status.go", userStatusEnumTmpl); err != nil {
+		return err
+	}
+
+	// errors/user_error.go
+	userErrorTmpl := `package errors
+
+import (
+	"fmt"
+
+	"{{.ModulePath}}/share/errors"
+)
+
+// ==================== User 模块错误 ====================
+// 错误码分段: 11xxx (11000-11999)
+
+const (
+	// User 模块错误码
+	UserNotFound           = 11001 // 用户不存在
+	UserAlreadyExists      = 11002 // 用户已存在
+	UserInvalidPassword    = 11003 // 密码错误
+	UserDisabled           = 11004 // 用户已被禁用
+	UserExpired            = 11005 // 用户已过期
+	UserInvalidEmail       = 11006 // 邮箱格式错误
+	UserEmailAlreadyExists = 11007 // 邮箱已被使用
+	UserUsernameExists     = 11008 // 用户名已被使用
+)
+
+// UserError User 模块错误，继承自 AppError
+type UserError struct {
+	*errors.AppError
+}
+
+// NewUserError 创建 User 错误
+func NewUserError(code int, message string) *UserError {
+	return &UserError{
+		AppError: errors.New(code, message),
+	}
+}
+
+// WrapUserError 包装原始错误
+func WrapUserError(code int, message string, err error) *UserError {
+	return &UserError{
+		AppError: errors.Wrap(code, message, err),
+	}
+}
+
+// Error 实现 error 接口
+func (e *UserError) Error() string {
+	if e.AppError.Err != nil {
+		return fmt.Sprintf("[User:%d] %s: %v", e.AppError.Code, e.AppError.Message, e.AppError.Err)
+	}
+	return fmt.Sprintf("[User:%d] %s", e.AppError.Code, e.AppError.Message)
+}
+
+// ==================== User 预定义错误（message 已定义） ====================
+
+var (
+	// ErrUserNotFound 用户不存在
+	ErrUserNotFound = &UserError{
+		AppError: errors.New(UserNotFound, "用户不存在"),
+	}
+
+	// ErrUserAlreadyExists 用户已存在
+	ErrUserAlreadyExists = &UserError{
+		AppError: errors.New(UserAlreadyExists, "用户已存在"),
+	}
+
+	// ErrUserInvalidPassword 密码错误
+	ErrUserInvalidPassword = &UserError{
+		AppError: errors.New(UserInvalidPassword, "密码错误"),
+	}
+
+	// ErrUserDisabled 用户已被禁用
+	ErrUserDisabled = &UserError{
+		AppError: errors.New(UserDisabled, "用户已被禁用"),
+	}
+
+	// ErrUserExpired 用户已过期
+	ErrUserExpired = &UserError{
+		AppError: errors.New(UserExpired, "用户已过期"),
+	}
+
+	// ErrUserInvalidEmail 邮箱格式不正确
+	ErrUserInvalidEmail = &UserError{
+		AppError: errors.New(UserInvalidEmail, "邮箱格式不正确"),
+	}
+
+	// ErrUserEmailAlreadyExists 邮箱已被使用
+	ErrUserEmailAlreadyExists = &UserError{
+		AppError: errors.New(UserEmailAlreadyExists, "邮箱已被使用"),
+	}
+
+	// ErrUserUsernameExists 用户名已被使用
+	ErrUserUsernameExists = &UserError{
+		AppError: errors.New(UserUsernameExists, "用户名已被使用"),
+	}
+)
+`
+	if err := g.renderAndWrite(userErrorTmpl, "user/domain/errors/user_error.go"); err != nil {
+		return err
+	}
+
+	// entity/user.go
+	userEntityTmpl := `package entity
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+	"{{.ModulePath}}/user/domain/enum"
+	"{{.ModulePath}}/user/domain/valueobject"
+)
+
 // User 用户实体 - 聚合根
 type User struct {
 	ID           uuid.UUID
 	Username     string
 	Email        valueobject.Email
 	PasswordHash string
-	Status       UserStatus
+	Status       enum.UserStatus
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
 
-// NewUser 创建新用户
-func NewUser(username string, email valueobject.Email, passwordHash string) *User {
-	now := time.Now()
-	return &User{
-		ID:           uuid.New(),
-		Username:     username,
-		Email:        email,
-		PasswordHash: passwordHash,
-		Status:       UserStatusInactive,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-}
-
 // Activate 激活用户
 func (u *User) Activate() {
-	u.Status = UserStatusActive
+	u.Status = enum.UserStatusActive
 	u.UpdatedAt = time.Now()
 }
 
 // Disable 禁用用户
 func (u *User) Disable() {
-	u.Status = UserStatusDisabled
+	u.Status = enum.UserStatusDisabled
 	u.UpdatedAt = time.Now()
 }
 
@@ -90,7 +217,7 @@ func (u *User) UpdateEmail(email valueobject.Email) {
 
 // IsActive 判断用户是否激活
 func (u *User) IsActive() bool {
-	return u.Status == UserStatusActive
+	return u.Status == enum.UserStatusActive
 }
 `
 	if err := g.renderAndWrite(userEntityTmpl, "user/domain/entity/user.go"); err != nil {
@@ -146,17 +273,14 @@ type UserRepository interface {
 
 import (
 	"context"
-	"errors"
+	"time"
 
+	"github.com/google/uuid"
+	"{{.ModulePath}}/user/domain/enum"
+	"{{.ModulePath}}/user/domain/errors"
 	"{{.ModulePath}}/user/domain/entity"
 	"{{.ModulePath}}/user/domain/repository"
 	"{{.ModulePath}}/user/domain/valueobject"
-)
-
-var (
-	ErrEmailAlreadyExists    = errors.New("邮箱已被使用")
-	ErrUsernameAlreadyExists = errors.New("用户名已被使用")
-	ErrInvalidEmail          = errors.New("邮箱格式不正确")
 )
 
 // UserDomainService 用户领域服务
@@ -176,7 +300,7 @@ func (s *UserDomainService) CreateUser(ctx context.Context, username string, ema
 	// 验证邮箱格式
 	email, err := valueobject.NewEmail(emailStr)
 	if err != nil {
-		return nil, ErrInvalidEmail
+		return nil, errors.ErrUserInvalidEmail
 	}
 
 	// 检查邮箱是否已存在
@@ -185,7 +309,7 @@ func (s *UserDomainService) CreateUser(ctx context.Context, username string, ema
 		return nil, err
 	}
 	if exists {
-		return nil, ErrEmailAlreadyExists
+		return nil, errors.ErrUserEmailAlreadyExists
 	}
 
 	// 检查用户名是否已存在
@@ -194,13 +318,69 @@ func (s *UserDomainService) CreateUser(ctx context.Context, username string, ema
 		return nil, err
 	}
 	if exists {
-		return nil, ErrUsernameAlreadyExists
+		return nil, errors.ErrUserUsernameExists
 	}
 
 	// 创建用户实体
-	user := entity.NewUser(username, email, passwordHash)
+	now := time.Now()
+	user := &entity.User{
+		ID:           uuid.New(),
+		Username:     username,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Status:       enum.UserStatusInactive,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
 
 	return user, nil
+}
+
+// GetUser 获取用户（包含业务规则校验）
+func (s *UserDomainService) GetUser(ctx context.Context, id uuid.UUID) (*entity.User, error) {
+	user, err := s.userRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.ErrUserNotFound
+	}
+	return user, nil
+}
+
+// UpdateUser 更新用户（包含业务规则校验）
+func (s *UserDomainService) UpdateUser(ctx context.Context, id uuid.UUID, username string, status *enum.UserStatus) (*entity.User, error) {
+	user, err := s.userRepo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, errors.ErrUserNotFound
+	}
+
+	// 更新字段（如果提供了新值）
+	if username != "" {
+		user.Username = username
+	}
+	if status != nil {
+		user.Status = *status
+	}
+	user.UpdatedAt = time.Now()
+
+	return user, nil
+}
+
+// DeleteUser 删除用户（包含业务规则校验）
+func (s *UserDomainService) DeleteUser(ctx context.Context, id uuid.UUID) error {
+	user, err := s.userRepo.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return errors.ErrUserNotFound
+	}
+
+	return s.userRepo.Delete(ctx, id)
 }
 `
 	if err := g.renderAndWrite(userDomainServiceTmpl, "user/domain/service/user_domain_service.go"); err != nil {
@@ -218,7 +398,7 @@ import (
 
 var (
 	ErrInvalidEmailFormat = errors.New("无效的邮箱格式")
-	emailRegex            = regexp.MustCompile(` + "`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$`" + `)
+	emailRegex            = regexp.MustCompile(` + "`" + `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$` + "`" + `)
 )
 
 // Email 邮箱值对象
@@ -257,6 +437,66 @@ func (e Email) LocalPart() string {
 }
 `
 	if err := g.writeFile("user/domain/valueobject/email.go", emailVOTmpl); err != nil {
+		return err
+	}
+
+	// valueobject/password.go
+	passwordVOTmpl := `package valueobject
+
+import (
+	"errors"
+
+	"golang.org/x/crypto/bcrypt"
+)
+
+var (
+	ErrInvalidPassword = errors.New("无效的密码")
+	ErrPasswordMismatch = errors.New("密码不匹配")
+)
+
+// Password 密码值对象
+type Password struct {
+	hash string
+}
+
+// NewPassword 从明文创建密码值对象（自动加密）
+// 使用 cost=12 提高安全性（默认是10，每增加1计算时间翻倍）
+func NewPassword(plainPassword string) (*Password, error) {
+	if plainPassword == "" {
+		return nil, ErrInvalidPassword
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(plainPassword), 12)
+	if err != nil {
+		return nil, err
+	}
+	return &Password{hash: string(hash)}, nil
+}
+
+// NewPasswordFromHash 从哈希值创建密码值对象
+func NewPasswordFromHash(hash string) (*Password, error) {
+	if hash == "" {
+		return nil, ErrInvalidPassword
+	}
+	return &Password{hash: hash}, nil
+}
+
+// String 返回哈希值（注意：不返回明文密码）
+func (p *Password) String() string {
+	return p.hash
+}
+
+// Hash 返回密码哈希
+func (p *Password) Hash() string {
+	return p.hash
+}
+
+// Verify 验证密码是否匹配
+func (p *Password) Verify(plainPassword string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(p.hash), []byte(plainPassword))
+	return err == nil
+}
+`
+	if err := g.writeFile("user/domain/valueobject/password.go", passwordVOTmpl); err != nil {
 		return err
 	}
 

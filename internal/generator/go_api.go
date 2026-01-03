@@ -8,20 +8,14 @@ func (g *GoGenerator) generateUserAPI() error {
 go 1.24.11
 
 require (
-	{{.ModulePath}}/bom v0.0.0
-	{{.ModulePath}}/share v0.0.0
-	{{.ModulePath}}/user/domain v0.0.0
-	{{.ModulePath}}/user/infrastructure v0.0.0
 
 	// Hertz HTTP 框架
 	github.com/cloudwego/hertz v0.9.3
 
 	// 通用工具
 	github.com/google/uuid v1.6.0
-	github.com/bytedance/sonic v1.12.6
-
-	// 验证器
-	github.com/go-playground/validator/v10 v10.23.0
+	{{.ModulePath}}/share v0.0.0
+	{{.ModulePath}}/user/domain v0.0.0
 )
 
 replace (
@@ -35,15 +29,31 @@ replace (
 		return err
 	}
 
-	// dto/user_dto.go
-	userDTOTmpl := `package dto
+	// dto/vo/user_vo.go
+	userVoTmpl := `package vo
 
 import (
 	"time"
 
 	"github.com/google/uuid"
-	"{{.ModulePath}}/user/domain/entity"
 )
+
+// UserVo 用户响应视图对象
+type UserVo struct {
+	ID        uuid.UUID ` + "`json:\"id\"`" + `
+	Username  string    ` + "`json:\"username\"`" + `
+	Email     string    ` + "`json:\"email\"`" + `
+	Status    int       ` + "`json:\"status\"`" + `
+	CreatedAt time.Time ` + "`json:\"created_at\"`" + `
+	UpdatedAt time.Time ` + "`json:\"updated_at\"`" + `
+}
+`
+	if err := g.writeFile("api/user-api/dto/vo/user_vo.go", userVoTmpl); err != nil {
+		return err
+	}
+
+	// dto/request/user_request.go
+	userRequestTmpl := `package request
 
 // CreateUserRequest 创建用户请求
 type CreateUserRequest struct {
@@ -56,43 +66,6 @@ type CreateUserRequest struct {
 type UpdateUserRequest struct {
 	Username *string ` + "`json:\"username,omitempty\" vd:\"len($)>2 && len($)<51\"`" + `
 	Status   *int    ` + "`json:\"status,omitempty\" vd:\"$>=0 && $<=2\"`" + `
-}
-
-// UserResponse 用户响应
-type UserResponse struct {
-	ID        uuid.UUID ` + "`json:\"id\"`" + `
-	Username  string    ` + "`json:\"username\"`" + `
-	Email     string    ` + "`json:\"email\"`" + `
-	Status    int       ` + "`json:\"status\"`" + `
-	CreatedAt time.Time ` + "`json:\"created_at\"`" + `
-	UpdatedAt time.Time ` + "`json:\"updated_at\"`" + `
-}
-
-// ToUserResponse 将领域实体转换为响应 DTO
-func ToUserResponse(user *entity.User) *UserResponse {
-	if user == nil {
-		return nil
-	}
-	return &UserResponse{
-		ID:        user.ID,
-		Username:  user.Username,
-		Email:     user.Email.String(),
-		Status:    int(user.Status),
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-	}
-}
-
-// ToUserResponseList 将领域实体列表转换为响应 DTO 列表
-func ToUserResponseList(users []*entity.User) []*UserResponse {
-	if users == nil {
-		return nil
-	}
-	responses := make([]*UserResponse, len(users))
-	for i, user := range users {
-		responses[i] = ToUserResponse(user)
-	}
-	return responses
 }
 
 // ListUsersRequest 用户列表请求
@@ -111,7 +84,42 @@ func (r *ListUsersRequest) SetDefaults() {
 	}
 }
 `
-	if err := g.renderAndWrite(userDTOTmpl, "api/user-api/dto/user_dto.go"); err != nil {
+	if err := g.writeFile("api/user-api/dto/request/user_request.go", userRequestTmpl); err != nil {
+		return err
+	}
+
+	// converter/user_converter.go
+	userConverterTmpl := `package converter
+
+import (
+	"{{.ModulePath}}/api/user-api/dto/vo"
+	"{{.ModulePath}}/user/domain/entity"
+)
+
+// UserConverter 用户转换器
+type UserConverter struct{}
+
+// NewUserConverter 创建用户转换器
+func NewUserConverter() *UserConverter {
+	return &UserConverter{}
+}
+
+// ToVo 将领域实体转换为视图对象
+func (c *UserConverter) ToVo(user *entity.User) *vo.UserVo {
+	if user == nil {
+		return nil
+	}
+	return &vo.UserVo{
+		ID:        user.ID,
+		Username:  user.Username,
+		Email:     user.Email.String(),
+		Status:    int(user.Status),
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}
+}
+`
+	if err := g.renderAndWrite(userConverterTmpl, "api/user-api/converter/user_converter.go"); err != nil {
 		return err
 	}
 
@@ -122,18 +130,20 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"{{.ModulePath}}/api/user-api/dto"
-	"{{.ModulePath}}/share/errors"
-	"{{.ModulePath}}/share/utils"
-	"{{.ModulePath}}/user/domain/entity"
+	"{{.ModulePath}}/api/user-api/converter"
+	"{{.ModulePath}}/api/user-api/dto/request"
+	"{{.ModulePath}}/api/user-api/dto/vo"
+	"{{.ModulePath}}/user/domain/enum"
 	"{{.ModulePath}}/user/domain/repository"
 	domainService "{{.ModulePath}}/user/domain/service"
+	"{{.ModulePath}}/user/domain/valueobject"
 )
 
 // UserAppService 用户应用服务
 type UserAppService struct {
 	userRepo          repository.UserRepository
 	userDomainService *domainService.UserDomainService
+	converter         *converter.UserConverter
 }
 
 // NewUserAppService 创建用户应用服务
@@ -141,105 +151,86 @@ func NewUserAppService(userRepo repository.UserRepository) *UserAppService {
 	return &UserAppService{
 		userRepo:          userRepo,
 		userDomainService: domainService.NewUserDomainService(userRepo),
+		converter:         converter.NewUserConverter(),
 	}
 }
 
 // CreateUser 创建用户
-func (s *UserAppService) CreateUser(ctx context.Context, req *dto.CreateUserRequest) (*dto.UserResponse, error) {
+func (s *UserAppService) CreateUser(ctx context.Context, req *request.CreateUserRequest) (*vo.UserVo, error) {
 	// 密码加密
-	passwordHash, err := utils.HashPassword(req.Password)
+	password, err := valueobject.NewPassword(req.Password)
 	if err != nil {
-		return nil, errors.ErrInternal("密码加密失败", err)
+		return nil, err
 	}
 
 	// 调用领域服务创建用户
-	user, err := s.userDomainService.CreateUser(ctx, req.Username, req.Email, passwordHash)
+	user, err := s.userDomainService.CreateUser(ctx, req.Username, req.Email, password.Hash())
 	if err != nil {
-		switch err {
-		case domainService.ErrEmailAlreadyExists:
-			return nil, errors.ErrConflict("邮箱已被使用")
-		case domainService.ErrUsernameAlreadyExists:
-			return nil, errors.ErrConflict("用户名已被使用")
-		case domainService.ErrInvalidEmail:
-			return nil, errors.ErrBadRequest("邮箱格式不正确")
-		default:
-			return nil, errors.ErrInternal("创建用户失败", err)
-		}
+		return nil, err
 	}
 
 	// 保存用户
 	if err := s.userRepo.Save(ctx, user); err != nil {
-		return nil, errors.ErrInternal("保存用户失败", err)
+		return nil, err
 	}
 
-	return dto.ToUserResponse(user), nil
+	return s.converter.ToVo(user), nil
 }
 
 // GetUser 获取用户
-func (s *UserAppService) GetUser(ctx context.Context, id uuid.UUID) (*dto.UserResponse, error) {
-	user, err := s.userRepo.FindByID(ctx, id)
+func (s *UserAppService) GetUser(ctx context.Context, id uuid.UUID) (*vo.UserVo, error) {
+	user, err := s.userDomainService.GetUser(ctx, id)
 	if err != nil {
-		return nil, errors.ErrInternal("查询用户失败", err)
+		return nil, err
 	}
-	if user == nil {
-		return nil, errors.ErrNotFound("用户不存在")
-	}
-	return dto.ToUserResponse(user), nil
+	return s.converter.ToVo(user), nil
 }
 
 // UpdateUser 更新用户
-func (s *UserAppService) UpdateUser(ctx context.Context, id uuid.UUID, req *dto.UpdateUserRequest) (*dto.UserResponse, error) {
-	user, err := s.userRepo.FindByID(ctx, id)
-	if err != nil {
-		return nil, errors.ErrInternal("查询用户失败", err)
+func (s *UserAppService) UpdateUser(ctx context.Context, id uuid.UUID, req *request.UpdateUserRequest) (*vo.UserVo, error) {
+	username := ""
+	if req.Username != nil {
+		username = *req.Username
 	}
-	if user == nil {
-		return nil, errors.ErrNotFound("用户不存在")
+	var status *enum.UserStatus
+	if req.Status != nil {
+		s := enum.UserStatus(*req.Status)
+		status = &s
 	}
 
-	// 更新字段
-	if req.Username != nil {
-		user.Username = *req.Username
-	}
-	if req.Status != nil {
-		user.Status = entity.UserStatus(*req.Status)
+	user, err := s.userDomainService.UpdateUser(ctx, id, username, status)
+	if err != nil {
+		return nil, err
 	}
 
 	// 保存更新
 	if err := s.userRepo.Update(ctx, user); err != nil {
-		return nil, errors.ErrInternal("更新用户失败", err)
+		return nil, err
 	}
 
-	return dto.ToUserResponse(user), nil
+	return s.converter.ToVo(user), nil
 }
 
 // DeleteUser 删除用户
 func (s *UserAppService) DeleteUser(ctx context.Context, id uuid.UUID) error {
-	user, err := s.userRepo.FindByID(ctx, id)
-	if err != nil {
-		return errors.ErrInternal("查询用户失败", err)
-	}
-	if user == nil {
-		return errors.ErrNotFound("用户不存在")
-	}
-
-	if err := s.userRepo.Delete(ctx, id); err != nil {
-		return errors.ErrInternal("删除用户失败", err)
-	}
-
-	return nil
+	return s.userDomainService.DeleteUser(ctx, id)
 }
 
 // ListUsers 查询用户列表
-func (s *UserAppService) ListUsers(ctx context.Context, req *dto.ListUsersRequest) ([]*dto.UserResponse, int64, error) {
+func (s *UserAppService) ListUsers(ctx context.Context, req *request.ListUsersRequest) ([]*vo.UserVo, int64, error) {
 	req.SetDefaults()
 
 	users, total, err := s.userRepo.List(ctx, req.Page, req.PageSize)
 	if err != nil {
-		return nil, 0, errors.ErrInternal("查询用户列表失败", err)
+		return nil, 0, err
 	}
 
-	return dto.ToUserResponseList(users), total, nil
+	// 转换为响应 DTO
+	responses := make([]*vo.UserVo, len(users))
+	for i, user := range users {
+		responses[i] = s.converter.ToVo(user)
+	}
+	return responses, total, nil
 }
 `
 	if err := g.renderAndWrite(userAppServiceTmpl, "api/user-api/service/user_app_service.go"); err != nil {
@@ -251,14 +242,16 @@ func (s *UserAppService) ListUsers(ctx context.Context, req *dto.ListUsersReques
 
 import (
 	"context"
+	"{{.ModulePath}}/share/errors"
+
+	"{{.ModulePath}}/api/user-api/dto/request"
+	"{{.ModulePath}}/api/user-api/service"
+	"{{.ModulePath}}/share/types"
+	"{{.ModulePath}}/user/domain/repository"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/google/uuid"
-	"{{.ModulePath}}/api/user-api/dto"
-	"{{.ModulePath}}/api/user-api/service"
-	"{{.ModulePath}}/share/types"
-	"{{.ModulePath}}/user/domain/repository"
 )
 
 // UserHandler 用户 HTTP 处理器
@@ -278,11 +271,11 @@ func NewUserHandler(userRepo repository.UserRepository) *UserHandler {
 // @Tags 用户管理
 // @Accept json
 // @Produce json
-// @Param request body dto.CreateUserRequest true "创建用户请求"
-// @Success 200 {object} types.Response{data=dto.UserResponse}
+// @Param request body request.CreateUserRequest true "创建用户请求"
+// @Success 200 {object} types.Response{data=vo.UserVo}
 // @Router /api/v1/users [post]
 func (h *UserHandler) CreateUser(ctx context.Context, c *app.RequestContext) {
-	var req dto.CreateUserRequest
+	var req request.CreateUserRequest
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(consts.StatusBadRequest, types.Error(400, err.Error()))
 		return
@@ -290,7 +283,7 @@ func (h *UserHandler) CreateUser(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := h.userAppService.CreateUser(ctx, &req)
 	if err != nil {
-		types.HandleError(ctx, c, err)
+		errors.HandleError(ctx, c, err)
 		return
 	}
 
@@ -302,7 +295,7 @@ func (h *UserHandler) CreateUser(ctx context.Context, c *app.RequestContext) {
 // @Tags 用户管理
 // @Produce json
 // @Param id path string true "用户ID"
-// @Success 200 {object} types.Response{data=dto.UserResponse}
+// @Success 200 {object} types.Response{data=vo.UserVo}
 // @Router /api/v1/users/{id} [get]
 func (h *UserHandler) GetUser(ctx context.Context, c *app.RequestContext) {
 	idStr := c.Param("id")
@@ -314,7 +307,7 @@ func (h *UserHandler) GetUser(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := h.userAppService.GetUser(ctx, id)
 	if err != nil {
-		types.HandleError(ctx, c, err)
+		errors.HandleError(ctx, c, err)
 		return
 	}
 
@@ -327,8 +320,8 @@ func (h *UserHandler) GetUser(ctx context.Context, c *app.RequestContext) {
 // @Accept json
 // @Produce json
 // @Param id path string true "用户ID"
-// @Param request body dto.UpdateUserRequest true "更新用户请求"
-// @Success 200 {object} types.Response{data=dto.UserResponse}
+// @Param request body request.UpdateUserRequest true "更新用户请求"
+// @Success 200 {object} types.Response{data=vo.UserVo}
 // @Router /api/v1/users/{id} [put]
 func (h *UserHandler) UpdateUser(ctx context.Context, c *app.RequestContext) {
 	idStr := c.Param("id")
@@ -338,7 +331,7 @@ func (h *UserHandler) UpdateUser(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	var req dto.UpdateUserRequest
+	var req request.UpdateUserRequest
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(consts.StatusBadRequest, types.Error(400, err.Error()))
 		return
@@ -346,7 +339,7 @@ func (h *UserHandler) UpdateUser(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := h.userAppService.UpdateUser(ctx, id, &req)
 	if err != nil {
-		types.HandleError(ctx, c, err)
+		errors.HandleError(ctx, c, err)
 		return
 	}
 
@@ -369,7 +362,7 @@ func (h *UserHandler) DeleteUser(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := h.userAppService.DeleteUser(ctx, id); err != nil {
-		types.HandleError(ctx, c, err)
+		errors.HandleError(ctx, c, err)
 		return
 	}
 
@@ -385,7 +378,7 @@ func (h *UserHandler) DeleteUser(ctx context.Context, c *app.RequestContext) {
 // @Success 200 {object} types.Response{data=types.PageResult}
 // @Router /api/v1/users [get]
 func (h *UserHandler) ListUsers(ctx context.Context, c *app.RequestContext) {
-	var req dto.ListUsersRequest
+	var req request.ListUsersRequest
 	if err := c.BindQuery(&req); err != nil {
 		c.JSON(consts.StatusBadRequest, types.Error(400, err.Error()))
 		return
@@ -393,7 +386,7 @@ func (h *UserHandler) ListUsers(ctx context.Context, c *app.RequestContext) {
 
 	users, total, err := h.userAppService.ListUsers(ctx, &req)
 	if err != nil {
-		types.HandleError(ctx, c, err)
+		errors.HandleError(ctx, c, err)
 		return
 	}
 

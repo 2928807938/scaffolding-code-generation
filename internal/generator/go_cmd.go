@@ -9,7 +9,6 @@ go 1.24.11
 
 require (
 	{{.ModulePath}}/bom v0.0.0
-	{{.ModulePath}}/share v0.0.0
 	{{.ModulePath}}/user/domain v0.0.0
 	{{.ModulePath}}/user/infrastructure v0.0.0
 	{{.ModulePath}}/api/user-api v0.0.0
@@ -20,9 +19,6 @@ require (
 	// 数据库
 	gorm.io/driver/postgres v1.5.11
 	gorm.io/gorm v1.25.12
-
-	// 配置管理
-	github.com/spf13/viper v1.19.0
 )
 
 replace (
@@ -54,7 +50,6 @@ import (
 	"gorm.io/gorm/logger"
 
 	userHTTP "{{.ModulePath}}/api/user-api/http"
-	"{{.ModulePath}}/share/middleware"
 	infraEntity "{{.ModulePath}}/user/infrastructure/entity"
 	infraRepo "{{.ModulePath}}/user/infrastructure/repository"
 )
@@ -79,7 +74,6 @@ func main() {
 	h := server.Default(server.WithHostPorts(":" + port))
 
 	// 全局中间件
-	h.Use(middleware.Trace())
 
 	// 健康检查
 	h.GET("/health", func(ctx context.Context, c *app.RequestContext) {
