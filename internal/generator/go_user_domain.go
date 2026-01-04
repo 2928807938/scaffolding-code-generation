@@ -9,12 +9,16 @@ go 1.24.11
 
 require (
 	{{.ModulePath}}/bom v0.0.0
+	{{.ModulePath}}/share v0.0.0
 
 	// 通用工具
 	github.com/google/uuid v1.6.0
 )
 
-replace {{.ModulePath}}/bom => ../../bom
+replace (
+	{{.ModulePath}}/bom => ../../bom
+	{{.ModulePath}}/share => ../../share
+)
 `
 	if err := g.renderAndWrite(goModTmpl, "user/domain/go.mod"); err != nil {
 		return err
@@ -173,11 +177,11 @@ var (
 	userEntityTmpl := `package entity
 
 import (
-	"time"
-
-	"github.com/google/uuid"
 	"{{.ModulePath}}/user/domain/enum"
 	"{{.ModulePath}}/user/domain/valueobject"
+
+	"github.com/google/uuid"
+	basegorm "{{.ModulePath}}/share/repository/gorm"
 )
 
 // User 用户实体 - 聚合根
@@ -187,32 +191,31 @@ type User struct {
 	Email        valueobject.Email
 	PasswordHash string
 	Status       enum.UserStatus
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	basegorm.AuditFields
 }
 
 // Activate 激活用户
 func (u *User) Activate() {
 	u.Status = enum.UserStatusActive
-	u.UpdatedAt = time.Now()
+	u.Touch()
 }
 
 // Disable 禁用用户
 func (u *User) Disable() {
 	u.Status = enum.UserStatusDisabled
-	u.UpdatedAt = time.Now()
+	u.Touch()
 }
 
 // ChangePassword 修改密码
 func (u *User) ChangePassword(newPasswordHash string) {
 	u.PasswordHash = newPasswordHash
-	u.UpdatedAt = time.Now()
+	u.Touch()
 }
 
 // UpdateEmail 更新邮箱
 func (u *User) UpdateEmail(email valueobject.Email) {
 	u.Email = email
-	u.UpdatedAt = time.Now()
+	u.Touch()
 }
 
 // IsActive 判断用户是否激活
@@ -230,32 +233,22 @@ func (u *User) IsActive() bool {
 import (
 	"context"
 
-	"github.com/google/uuid"
+	baseRepo "{{.ModulePath}}/share/repository"
 	"{{.ModulePath}}/user/domain/entity"
+
+	"github.com/google/uuid"
 )
 
-// UserRepository 用户仓储接口
+// UserRepository 用户仓储接口，继承可查询仓储
 type UserRepository interface {
-	// Save 保存用户
-	Save(ctx context.Context, user *entity.User) error
-
-	// FindByID 根据 ID 查找用户
-	FindByID(ctx context.Context, id uuid.UUID) (*entity.User, error)
+	// 继承可查询仓储（包含 CRUD、分页、条件查询等）
+	baseRepo.QueryableRepository[entity.User, uuid.UUID]
 
 	// FindByEmail 根据邮箱查找用户
 	FindByEmail(ctx context.Context, email string) (*entity.User, error)
 
 	// FindByUsername 根据用户名查找用户
 	FindByUsername(ctx context.Context, username string) (*entity.User, error)
-
-	// Update 更新用户
-	Update(ctx context.Context, user *entity.User) error
-
-	// Delete 删除用户
-	Delete(ctx context.Context, id uuid.UUID) error
-
-	// List 分页查询用户列表
-	List(ctx context.Context, page, pageSize int) ([]*entity.User, int64, error)
 
 	// ExistsByEmail 检查邮箱是否存在
 	ExistsByEmail(ctx context.Context, email string) (bool, error)
@@ -338,7 +331,7 @@ func (s *UserDomainService) CreateUser(ctx context.Context, username string, ema
 
 // GetUser 获取用户（包含业务规则校验）
 func (s *UserDomainService) GetUser(ctx context.Context, id uuid.UUID) (*entity.User, error) {
-	user, err := s.userRepo.FindByID(ctx, id)
+	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +343,7 @@ func (s *UserDomainService) GetUser(ctx context.Context, id uuid.UUID) (*entity.
 
 // UpdateUser 更新用户（包含业务规则校验）
 func (s *UserDomainService) UpdateUser(ctx context.Context, id uuid.UUID, username string, status *enum.UserStatus) (*entity.User, error) {
-	user, err := s.userRepo.FindByID(ctx, id)
+	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -365,14 +358,14 @@ func (s *UserDomainService) UpdateUser(ctx context.Context, id uuid.UUID, userna
 	if status != nil {
 		user.Status = *status
 	}
-	user.UpdatedAt = time.Now()
+	user.Touch()
 
 	return user, nil
 }
 
 // DeleteUser 删除用户（包含业务规则校验）
 func (s *UserDomainService) DeleteUser(ctx context.Context, id uuid.UUID) error {
-	user, err := s.userRepo.FindByID(ctx, id)
+	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
